@@ -1,0 +1,246 @@
+% !TEX root = ../main.tex
+
+\chapter{系统实现与展示}
+
+
+\section{智能合约实现}
+
+
+智能合约模块是本文系统在合约链上的核心实现。\texttt{CrossChainTokenPool.sol} 同时承担资产池、跨链中间代币和 HTLC 状态机功能。合约的实现重点不是单次转账，而是维护跨链交换在不同阶段的状态：用户侧锁定由 \texttt{CrossChainSwap} 表示，目标侧响应锁定由 \texttt{ManagerLock} 表示。两个结构体的核心字段如下。
+
+
+\begin{codeblock}[language=Solidity]
+struct CrossChainSwap {
+    bytes32 hashLock;
+    uint256 timeLock;
+    address sender;
+    address recipient;
+    uint256 amount;
+    bool completed;
+    bool refunded;
+    bool isManagerLocked;
+}
+
+struct ManagerLock {
+    bytes32 hashLock;
+    uint256 timeLock;
+    address recipient;
+    uint256 amount;
+    bool completed;
+    bool refunded;
+}
+\end{codeblock}
+
+
+其中，\texttt{hashLock} 用于约束领取条件，\texttt{timeLock} 用于约束退款条件，\texttt{completed} 和 \texttt{refunded} 用于避免同一笔交换重复完成或重复退款。用户发起跨链交换后，合约将资产转入合约地址并写入 \texttt{CrossChainSwap}；Notary 或目标侧执行节点响应后，合约创建 \texttt{ManagerLock}，使目标链资产与源链锁定通过同一个 \texttt{hashLock} 关联。
+
+
+核心接口可以概括为以下几类。
+
+
+\begin{codeblock}[language=Solidity]
+function initiateCrossChain(
+    bytes32 hashLock,
+    address recipient,
+    uint256 amount,
+    uint256 timeLockBlocks
+) external returns (bytes32 swapId);
+
+function managerRespondToCrossChain(
+    bytes32 hashLock,
+    address recipient,
+    uint256 amount,
+    uint256 timeLockBlocks
+) external;
+
+function completeCrossChain(bytes32 swapId, bytes32 secret) external;
+function completeManagerLock(bytes32 hashLock, bytes32 secret) external;
+
+function refundCrossChain(bytes32 swapId) external;
+function refundManagerLock(bytes32 hashLock) external;
+\end{codeblock}
+
+
+这些接口分别对应跨链流程中的发起、响应、完成和退款四个阶段。完成阶段的关键检查是 \texttt{keccak256(abi.encodePacked(secret)) == hashLock}，只有提交正确 secret 才能改变交易状态；退款阶段的关键检查是当前区块高度已经超过 \texttt{timeLock}，并且交易尚未完成。合约还通过 \texttt{CrossChainInitiated}、\texttt{CrossChainCompleted}、\texttt{ManagerLockCreated}、\texttt{ManagerLockCompleted}、\texttt{CrossChainRefunded} 和 \texttt{ManagerLockRefunded} 等事件向链下模块暴露状态变化。Notary 监听这些事件后即可驱动目标链执行对应操作。
+
+
+\section{后端服务实现}
+
+
+后端服务承担跨链协调职责，核心任务是将不同链之间无法直接通信的现实转化为统一的跨链状态管理。系统采用 Python Flask 框架，按照链类型划分为多个 coordinator 模块，每个 coordinator 封装对应链的节点连接、交易构造和事件解析逻辑。
+
+后端的模块结构如下。顶层为统一的 API 路由层，负责接收前端或外部调用的跨链请求；中间层为 coordinator 分发层，根据请求中的 \texttt{sourceChain} 和 \texttt{targetChain} 字段将请求路由到对应的链处理模块；底层为各链适配模块，包括 ETH coordinator（通过 Web3.py 与 EVM 合约交互）、BSC coordinator（复用 EVM 适配逻辑但连接不同节点）、Conflux coordinator（通过 conflux-web3 适配）、Fabric coordinator（通过 SDK 调用链码）以及 BTC coordinator（作为无脚本链场景的替代实现，处理 adaptor signature 状态）。这种分层设计使得新增链适配只需实现底层模块，不影响上层路由和状态管理。
+
+通用跨链接口包括：
+
+
+\begin{codeblock}
+POST /cross-chain/initiate
+POST /cross-chain/complete/<swap_id>
+POST /cross-chain/refund/<swap_id>
+GET  /cross-chain/status/<swap_id>
+GET  /cross-chain/active
+\end{codeblock}
+
+
+对于 BTC 适配场景，后端还提供独立入口：
+
+
+\begin{codeblock}
+POST /cross-chain/eth-to-btc/initiate
+POST /cross-chain/eth-to-btc/complete/<hash_lock>
+GET  /cross-chain/eth-to-btc/status/<hash_lock>
+\end{codeblock}
+
+
+在核心流程中，后端从交易回执中解析 \texttt{CrossChainInitiated} 事件，提取 \texttt{swapId}、\texttt{hashLock}、\texttt{amount}、\texttt{recipient} 和 \texttt{timeLock} 等参数，并根据目标链类型调用对应 coordinator 的响应方法。如果链上交易提交失败（如 gas 不足或网络超时），coordinator 会记录失败状态并暴露给前端，由用户决定是否重试或等待 timeLock 到期后退款。后端不会在链上交易失败时自动重试并提交新交易，以避免在不确定状态下造成重复锁定。
+
+需要强调的是，后端服务并不是安全性的唯一来源。它可以帮助自动化流程、提高用户体验，但资产能否释放仍由合约或签名协议决定。即使后端出现异常，系统仍应依靠 timeLock 提供退款路径。这一点与第五章的 Notary 信任边界分析一致：后端与 Notary 更接近流程协调层，而不是最终资产安全的唯一保证。
+
+
+\section{前端可视化实现}
+
+
+前端模块服务于两个目的：一是提供跨链交换的产品原型入口，二是通过 HTLC 演示页面将协议流程可视化，辅助论文展示和系统验证。
+
+跨链交换页面展示源链、目标链、跨链模式、接收地址和金额等输入项。该页面为纯前端原型，用于展示产品形态，不直接触发链上交易。用户提交表单后，前端调用后端 \texttt{/cross-chain/initiate} 接口，由后端完成实际的链上操作。
+
+HTLC 演示页面是论文展示的核心组件。该页面围绕 Alice - ManagerA - Notary - ManagerB - Bob 五个角色展开，采用纯前端状态驱动的方式模拟协议执行过程，不依赖后端 API 或真实链上交易。用户通过”推进”按钮逐步触发状态转换，每一步对应协议中的一个阶段：生成 secret、计算 hashLock、源链锁定、Notary 监听、目标链响应、揭示 secret、Bob 领取或超时退款。前端状态模型如下。
+
+
+\begin{codeblock}
+interface HtlcDemoState {
+  scenario: 'complete' | 'refund';
+  currentStep: number;
+  completed: boolean;
+  refunded: boolean;
+  secret: string;
+  hashLock: string;
+  timeLock: string;
+  swapId: string;
+  txHash: string;
+}
+\end{codeblock}
+
+
+其中 \texttt{scenario} 区分正常完成路径和超时退款路径，\texttt{currentStep} 控制流程推进，页面右侧同步展示 \texttt{secret}、\texttt{hashLock}、\texttt{timeLock}、\texttt{swapId}、各角色余额变化和当前状态。这种纯前端模拟的设计选择是有意为之：它使演示不受链环境可用性的影响，能够在任何场景下稳定展示协议流程和安全条件，适合作为论文答辩和系统验证的辅助工具。
+
+
+\section{实验流程设计}
+
+
+为了验证系统功能和安全性，本文分别从功能正确性、安全约束和异构适配三个角度进行实验。合约链实验在本地 Hardhat 网络上执行，测试工具为 Hardhat、ethers.js 和 Chai，测试文件为 \filepath{test/HTLC.test.js}。实验中部署两个 \texttt{CrossChainTokenPool} 实例，分别模拟源链 ETH 池和目标链 BSC 池；测试账户包括 manager、Alice 和 Bob；Alice 与 manager 预先通过 \texttt{swapNativeForToken} 获得测试代币，实验金额设置为 200 至 500 个测试代币，\texttt{secret} 由 \texttt{ethers.randomBytes(32)} 生成，\texttt{hashLock} 由 \texttt{ethers.keccak256(secret)} 计算得到。无脚本链场景的 adaptor signature 实验在 Python 模拟环境中执行，测试文件为 \filepath{schnorr/test_scenario.py}，依赖 ECPy 椭圆曲线库，以 BTC 的 secp256k1 曲线作为替代实现。
+
+
+\subsection{功能正确性验证}
+
+
+功能正确性实验验证正常跨链路径是否能够完成。实验步骤为：Alice 在源链调用 \texttt{initiateCrossChain} 发起跨链请求，合约产生 \texttt{CrossChainInitiated} 事件；目标链执行 \texttt{managerRespondToCrossChain} 创建 \texttt{ManagerLock}；随后 Alice 调用 \texttt{completeCrossChain} 揭示 secret，Bob 使用同一 secret 调用 \texttt{completeManagerLock} 领取目标链资产。实际测试结果显示，交易依次触发 \texttt{CrossChainCompleted} 和 \texttt{ManagerLockCompleted} 事件，源链 \texttt{CrossChainSwap.completed} 与目标链 \texttt{ManagerLock.completed} 均变为 \texttt{true}，Bob 的目标链余额增加到测试设定的 \texttt{swapAmount}。该实验对应第五章的原子性分析，说明同一个 secret 能够联动两侧状态完成。
+
+
+退款路径实验验证失败退出能力。实验中 Alice 发起跨链锁定后不公开 secret，测试脚本通过 Hardhat 时间辅助函数推进区块高度，使 timeLock 到期。随后 Alice 调用 \texttt{refundCrossChain}，manager 调用 \texttt{refundManagerLock}。实际结果显示，合约分别触发 \texttt{CrossChainRefunded} 和 \texttt{ManagerLockRefunded} 事件，Alice 与 manager 的测试代币余额恢复到初始水平。该结果对应第五章 5.1 中的可退款性说明，表明当 secret 未公开时，系统不会造成资金永久锁定。
+
+
+\subsection{安全约束验证}
+
+
+安全约束实验验证 hashLock 防护、权限控制、重复锁定防护和 timeLock 不对称约束。
+
+重复 hashLock 实验中，manager 第一次使用某一 \texttt{hashLock} 创建 \texttt{ManagerLock} 后，再次使用同一 \texttt{hashLock} 创建锁定会被合约拒绝，revert 信息为 \texttt{Hash lock already used}。该结果说明合约能够限制同一哈希锁被重复响应，降低重放和重复领取风险。
+
+权限控制实验中，非授权账户尝试调用 \texttt{managerRespondToCrossChain}，交易被合约回滚，revert 信息为 \texttt{Only notary can call this function}。该结果表明目标链响应动作受到角色权限限制，非授权地址无法触发关键状态变更，与第五章对 Notary 信任边界的分析相对应。
+
+更新测试脚本中的权限命名后，Hardhat 输出显示 6 个测试用例全部通过，说明正常完成、超时退款、重复 hashLock 防护和非授权调用拒绝等约束均能在本地测试环境中得到验证。
+
+错误 secret 实验中，调用 \texttt{completeCrossChain} 时提交一个与 \texttt{hashLock} 不匹配的 secret，合约执行 \texttt{keccak256(abi.encodePacked(secret)) == hashLock} 检查失败并回滚交易。该结果说明不知道正确 secret 的参与方无法完成领取，与第五章 5.1 的原子性约束相对应。
+
+timeLock 不对称约束实验验证第五章 5.1 中论证的关键安全条件。实验设置源链 timeLock 为 100 个区块，目标链 ManagerLock 的 timeLock 为 50 个区块。测试脚本将区块高度推进至第 55 块（目标链 timeLock 已到期但源链 timeLock 未到期），此时目标链 \texttt{refundManagerLock} 可以成功执行，而源链 \texttt{refundCrossChain} 因 timeLock 未到期被拒绝。继续推进至第 105 块后，源链退款才可执行。该结果验证了 timeLock 不对称设置的正确性：目标链到期后源链仍有足够窗口供参与方使用 secret 完成结算，避免了双方同时退款导致原子性破坏的风险。
+
+
+\subsection{异构适配验证}
+
+
+无脚本链场景的 adaptor signature 实验验证机制流程。实验脚本依次生成 Alice、Bob、Carol 的 secp256k1 公私钥，构造聚合锁定点，生成 Alice 到 Bob 以及 Bob 到 Carol 的 adaptor signature。随后 Carol 补全签名并广播模拟交易，Bob 从该交易中提取秘密，再使用该秘密完成 Alice 到 Bob 的结算。整个流程仅使用签名生成、补全和验证操作，不依赖任何链上脚本，因此可直接迁移到 Monero、ZCash 屏蔽交易等无脚本链。实际运行输出显示：
+
+
+\begin{codeblock}[extendedchars=true]
+Tx_Bob_to_Carol confirmed on-chain.
+Carol 成功领取资金。
+Bob 从交易 Tx_Bob_to_Carol 中提取到了秘密。
+Tx_Alice_to_Bob confirmed on-chain.
+Bob 成功领取资金。
+Simulation Complete.
+\end{codeblock}
+
+
+该实验说明在无脚本链场景中，交易完成与秘密提取之间能够建立联系。它对应第五章 5.4 的异构兼容分析：合约链通过 HTLC 在链上验证 secret，无脚本链通过签名补全关系暴露秘密，两者虽然实现方式不同，但都服务于“完成条件绑定”和“失败可退出”的安全目标。实验以 BTC 的 secp256k1 曲线作为替代实现，验证的机制不依赖脚本能力，可迁移到真正的无脚本链。
+
+
+综上，第六章实验与第五章安全性分析形成对应关系：正常完成与退款实验验证 5.1 的原子性和可退款性；timeLock 不对称实验验证 5.1 中的时间约束安全条件；权限控制实验验证 5.2 的 Notary 信任边界；重复 hashLock 和错误 secret 实验验证 5.3 中对重放风险和 hashLock 防护的约束；adaptor signature 模拟实验验证 5.4 中多机制兼容的可行性。
+
+
+\section{性能与代价评估}
+
+
+在功能与安全验证之外，本节进一步评估系统在 HTLC 路径上的实际代价，包括本地环境下的 gas 与存储开销，以及真实测试网环境下的时间开销。需要说明的是，这些指标针对的是链上 HTLC 合约方案；adaptor signature 路径运行于纯密码学的无脚本链，不涉及 gas 与合约存储，其评估留待真实无脚本链接入后进行（见第七章）。
+
+\subsection{gas 与存储代价}
+
+
+gas 与存储实验在本地 Hardhat 网络上执行（测试文件 \filepath{test/gas-benchmark.test.js}），覆盖合约部署及一笔完整跨链交换涉及的全部操作，gas 数据从交易回执的 \texttt{gasUsed} 字段读取。结果如表~\ref{tab:gas-cost} 所示。
+
+\begin{table}[htbp]
+  \centering
+  \caption{HTLC 路径各操作的 gas 消耗（本地 Hardhat）}
+  \label{tab:gas-cost}
+  \begin{tabular}{@{}lr@{}}
+    \toprule
+    操作 & gas 消耗 \\ \midrule
+    部署合约（单条链池子） & 3\,696\,469 \\
+    \texttt{swapNativeForToken}（原生币兑换中间代币） & 76\,135 \\
+    \texttt{initiateCrossChain}（源链发起锁定） & 198\,149 \\
+    \texttt{managerRespondToCrossChain}（目标链创建锁定） & 171\,690 \\
+    \texttt{completeCrossChain}（源链结算） & 71\,453 \\
+    \texttt{completeManagerLock}（目标链领取） & 84\,224 \\
+    \texttt{refundCrossChain}（源链退款） & 64\,410 \\
+    \texttt{refundManagerLock}（目标链退款） & 65\,925 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+从数据可见，合约部署是一次性的最大开销（约 370 万 gas）；运行期单笔操作中，写入新状态的操作（\texttt{initiateCrossChain}、\texttt{managerRespondToCrossChain}）gas 较高，因为它们首次写入 \texttt{CrossChainSwap} 与 \texttt{ManagerLock} 结构的多个存储槽；而完成与退款操作主要修改既有状态的标志位，gas 较低。一笔完整的双侧交换（发起、响应、两侧完成）链上 gas 合计约 52 万，处于普通 ERC20 多笔转账的量级，表明 HTLC 方案在合约链上的运行开销是可接受的。
+
+在存储方面，每笔交换在源链创建一条 \texttt{CrossChainSwap} 记录，在目标链响应后创建一条 \texttt{ManagerLock} 记录。按结构体字段的存储槽布局估算，\texttt{CrossChainSwap} 约占 8 个存储槽，\texttt{ManagerLock} 约占 6 个，一笔完整的双侧交换约新增 14 个存储槽。由于每笔交换独立占用各自的 mapping 条目，链上持久化存储成本随交换数量\textbf{线性增长}，主要来自 \texttt{crossChainSwaps} 与 \texttt{managerLocks} 两个 mapping。这一增长特性提示：在长期运行的部署中，已完成或已退款的历史记录可考虑通过清理或归档机制回收存储，以控制状态膨胀。
+
+\subsection{真实测试网时间代价}
+
+
+为评估系统在真实异构链环境下的时间开销，本文在 Sepolia（源链）与 Conflux eSpace 测试网（目标链）上部署合约并执行一次完整的跨链交换（脚本 \filepath{scripts/eth_cfx/timing-benchmark.js}）。实验采用职责分离的三方角色：Alice 在 Sepolia 发起、Notary/Manager 在 CFX 响应、Bob 在 CFX 领取、Alice 在 Sepolia 完成结算。完整路径与各阶段确认时间如表~\ref{tab:timing-cost} 所示。
+
+\begin{table}[htbp]
+  \centering
+  \caption{Sepolia $\rightarrow$ CFX eSpace 跨链各阶段确认时间}
+  \label{tab:timing-cost}
+  \begin{tabular}{@{}lr@{}}
+    \toprule
+    阶段 & 确认时间 \\ \midrule
+    Sepolia 源链发起确认（兑换并发起锁定） & 21.17\,s \\
+    CFX 目标链响应确认（创建 ManagerLock） & 10.99\,s \\
+    CFX Bob 领取确认（揭示 secret） & 9.09\,s \\
+    Sepolia 源链完成确认（结算） & 13.22\,s \\ \midrule
+    端到端总耗时 & 54.48\,s \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+从结果看，一次完整跨链交换的端到端耗时约 54 秒，主要由四次链上交易的确认时间累加而成。其中 Sepolia 侧确认较慢（发起 21 秒、完成 13 秒），CFX eSpace 侧较快（响应 11 秒、领取 9 秒），差异来自两条链不同的出块速度和确认机制，公共 RPC 节点的网络延迟也有一定贡献。需要说明的是，本实验为单次真实运行的记录，具体数值会随测试网负载和 RPC 状态波动，此处用于说明数量级而非精确基准。
+
+更值得关注的是 Notary 的活跃时长与成本。从脚本侧解析源链事件到向目标链提交响应交易，观测延迟仅约 13\,ms，说明协调逻辑本身开销极小；端到端时间几乎全部消耗在链上确认等待上。据此可量化 Notary 的活跃窗口：
+
+\begin{itemize}
+  \item \textbf{狭义活跃时长} $T_{\text{active}}$（从监听到源链事件到目标链 ManagerLock 创建确认）：约 \textbf{10.99\,s}；
+  \item \textbf{广义活跃时长}（从监听到源链事件到目标链领取完成）：约 \textbf{20.08\,s}；
+  \item Notary 在目标链发起响应交易的 gas 消耗：291\,678。
+\end{itemize}
+
+这组数据为第五章 5.5 节的论证提供了真实环境的量化注脚：Notary 的成本表现为\textbf{一段以秒计的在线活跃窗口加上一笔目标链响应的 gas}，而非任何形式的资本占用。它在整个跨链过程中既不接收源链资产，也不垫付目标链流动性，目标链资产由 Manager 资金池提供。这与传统资金托管型公证人形成鲜明对比——后者必须预先准备并持续再平衡两条链的库存。由此，运行一个 Notary 节点的门槛被压低为\textquotedblleft 在线 + gas\textquotedblright，首个中继节点即可零资本接入。

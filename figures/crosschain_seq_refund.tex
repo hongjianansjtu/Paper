@@ -1,0 +1,54 @@
+% 跨链超时退款路径时序图
+\begin{tikzpicture}[
+    font=\footnotesize,
+    actor/.style={rectangle, draw, rounded corners, minimum height=2em, minimum width=4.6em, align=center, fill=black!3},
+    msg/.style={-{LaTeX}, thick},
+    xmsg/.style={-{LaTeX}, thick, red!60!black},
+    note/.style={font=\scriptsize\itshape, text=black!60},
+  ]
+
+  % ===== 角色生命线 X 坐标 =====
+  \def\xA{0}
+  \def\xMA{2.6}
+  \def\xN{5.2}
+  \def\xMB{7.8}
+  \def\xB{10.4}
+
+  % ===== 顶部角色框 =====
+  \node[actor] (A) at (\xA,0) {Alice};
+  \node[actor] (MA) at (\xMA,0) {ManagerA};
+  \node[actor] (N) at (\xN,0) {Notary};
+  \node[actor] (MB) at (\xMB,0) {ManagerB};
+  \node[actor] (B) at (\xB,0) {Bob};
+
+  % ===== 生命线 =====
+  \def\ybot{-8.6}
+  \foreach \x in {\xA,\xMA,\xN,\xMB,\xB}{
+    \draw[gray, dashed] (\x,-0.45) -- (\x,\ybot);
+  }
+
+  % 1. Alice 发起锁定（与正常路径相同的起点）
+  \draw[msg] (\xA,-1.4) -- node[above, font=\scriptsize]{initiate(...)} (\xMA,-1.4);
+  \node[note, right] at (\xMA-1.6,-1.85) {源链锁定，timeLock\_source（较长）};
+
+  % 2. Notary 转发，ManagerB 创建锁定
+  \draw[msg] (\xMA,-2.4) -- node[above, font=\scriptsize]{event} (\xN,-2.4);
+  \draw[msg] (\xN,-2.9) -- node[above, font=\scriptsize]{managerRespond(...)} (\xMB,-2.9);
+  \node[note, right] at (\xMB-2.2,-3.35) {目标链锁定，timeLock\_target（较短）};
+
+  % 3. secret 始终未公开
+  \node[note, red!60!black] at (\xN,-4.2) {secret 始终未公开（参与方不配合 / Notary 失效 / Bob 未领取）};
+  \draw[red!50, dashed] (\xA-0.6,-4.55) -- (\xB+0.6,-4.55);
+
+  % 4. 目标链 timeLock 先到期 -> ManagerB 退款
+  \node[note, right] at (\xMB-2.6,-5.3) {timeLock\_target 先到期};
+  \draw[xmsg] (\xMB,-5.8) .. controls (\xMB+0.9,-5.4) and (\xMB+0.9,-6.2) .. node[right, font=\scriptsize]{refundManagerLock} (\xMB,-6.2);
+
+  % 5. 源链 timeLock 后到期 -> Alice 退款
+  \node[note, right] at (\xA+0.15,-7.0) {timeLock\_source 后到期};
+  \draw[xmsg] (\xA,-7.5) .. controls (\xA+0.9,-7.1) and (\xA+0.9,-7.9) .. node[right, font=\scriptsize]{refundCrossChain} (\xA,-7.9);
+
+  % 6. 不对称约束说明
+  \node[note, align=center, text=red!60!black] at (\xN,-8.2) {退款顺序：目标链先、源链后（timeLock\_source \textgreater\ timeLock\_target），保证安全退出};
+
+\end{tikzpicture}

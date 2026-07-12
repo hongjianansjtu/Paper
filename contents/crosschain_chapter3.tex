@@ -1,0 +1,78 @@
+% !TEX root = ../main.tex
+
+\chapter{系统总体设计}
+
+
+\section{系统角色模型}
+
+
+本文系统采用 Alice - ManagerA - Notary - ManagerB - Bob 的跨链协作模型。该模型将跨链交易中的资金流、消息流和控制流拆分为不同角色，从而提高各环节的可分析性。
+
+
+Alice 是跨链交易发起方。她负责生成 secret，计算 hashLock，并在源链发起跨链请求。Alice 在源链上锁定资产或中间代币后，等待目标链完成对应资产释放。Bob 是目标链上的接收方，最终应在目标链收到对应资产。在最简单的跨链场景中，Alice 和 Bob 可以是两个不同用户，也可以是同一用户在不同链上的地址。
+
+
+ManagerA 和 ManagerB 是两侧资产池或跨链 TokenPool 的管理者。ManagerA 位于源链一侧，负责接收、兑换或锁定 Alice 的资产；ManagerB 位于目标链一侧，负责为 Bob 创建对应锁定并在满足条件时释放资产。Manager 并不是任意转移用户资金的中心化操作者，其行为受到合约状态、hashLock、timeLock 和权限控制约束。
+
+
+Notary 是公证与中继节点，负责监听源链事件并协调目标链操作。当 Alice 在源链发起跨链请求后，源链合约会产生事件，Notary 从事件中读取 swapId、hashLock、amount、recipient 等参数，并将其转发给目标链 ManagerB。Notary 的角色重点在于跨链消息传递和流程协调，而不是最终托管资产。
+
+
+这种角色模型的优点在于结构清晰。Alice 和 Bob 是用户端，Manager 处理资金池，Notary 处理消息协调，HTLC 或 adaptor signature 处理条件锁定。论文后续章节中的安全性和兼容性分析也都围绕这一角色模型展开。
+
+
+\section{系统模块划分}
+
+
+从工程实现角度看，系统可以划分为智能合约模块、后端协调模块、scriptless 适配模块和前端可视化模块。系统的整体分层架构如图~\ref{fig:crosschain_arch} 所示，自上而下分为前端可视化层、后端协调层和链上机制层，五类角色分别落在不同层次：用户端（Alice/Bob）通过前端层发起和观察交易，Notary 位于后端协调层负责跨链消息中继，ManagerA/ManagerB 与具体的链上机制（HTLC 或 adaptor signature）位于链上机制层。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/crosschain_arch.tex}
+  \caption{跨链系统分层架构}
+  \label{fig:crosschain_arch}
+\end{figure}
+
+
+智能合约模块主要对应 CrossChainTokenPool 合约。该模块实现跨链资产池、原生币与中间代币兑换、跨链请求发起、Manager 响应、资产领取和超时退款等功能。合约中保存 CrossChainSwap 和 ManagerLock 两类状态，分别表示用户侧锁定和 Manager 侧锁定。二者通过 hashLock 和 swapId 建立关联。
+
+
+后端协调模块主要由 Python 服务和跨链 coordinator 组成。该模块负责提供 API、连接不同链节点、监听合约事件、处理跨链状态、构造目标链交易并协调 Manager 响应。后端并不替代链上合约的安全判断，而是将不同链之间的消息传递和交易调用组织起来。
+
+
+scriptless 适配模块主要用于展示 Schnorr adaptor signature 机制，面向 Monero、ZCash 屏蔽交易等无脚本链的跨链场景。该模块通过模拟钱包、区块链和签名流程，说明如何创建 adaptor signature、如何补全签名、如何从完整签名中提取 secret，以及如何将该机制用于跨链条件交换。由于无脚本链无法在链上表达 HTLC 的条件分支，adaptor signature 将条件锁定放入签名补全过程，使这类链仅凭签名能力即可参与原子交换。原型实现以 BTC 作为该场景的替代实现，仅用于验证机制正确性。
+
+
+前端可视化模块用于展示系统流程。它包括跨链交换入口原型和 HTLC 流程演示页面。演示页面能够展示 Alice、ManagerA、Notary、ManagerB、Bob 等角色，展示 secret、hashLock、timeLock、swapId、余额变化和交易阶段，有助于理解跨链协议的执行过程。
+
+
+\section{总体跨链流程}
+
+
+系统总体流程可以分为正常完成路径和超时退款路径。
+
+
+在正常完成路径中，Alice 首先生成 secret，并计算 hashLock = H(secret)。随后 Alice 在源链发起跨链请求，提交 hashLock、目标接收地址、金额和 timeLock 等参数。源链 ManagerA 或 TokenPool 合约将 Alice 的资产锁定，并产生 CrossChainInitiated 事件。Notary 监听到该事件后，读取跨链参数，并通知目标链 ManagerB 创建对应的 ManagerLock。ManagerB 在目标链锁定等值资产，等待 Bob 或相关执行方提交 secret。当 secret 被公开后，目标链合约验证 H(secret) 是否等于 hashLock。验证通过后，目标链释放资产给 Bob。由于 secret 已公开，源链也可以用同一 secret 完成结算。至此，一笔跨链交换完成。该路径中各角色之间的消息与资产流转顺序如图~\ref{fig:crosschain_seq_complete} 所示。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/crosschain_seq_complete.tex}
+  \caption{正常完成路径时序图}
+  \label{fig:crosschain_seq_complete}
+\end{figure}
+
+
+在超时退款路径中，如果 Alice 没有公开 secret，或者 Notary 未能及时协调目标链响应，或者 Bob 没有在规定时间内领取资产，则系统进入失败处理。timeLock 到期后，源链上的 Alice 可以调用退款逻辑取回被锁定资产；目标链 ManagerB 也可以对未完成的 ManagerLock 进行退款或回收。这样即使跨链流程中断，资产也不会永久停留在锁定状态。该路径如图~\ref{fig:crosschain_seq_refund} 所示，需要特别注意退款的时间顺序：目标链 ManagerLock 的 timeLock 设置得比源链更短，因此目标链先到期退款、源链后到期退款，这一不对称约束在第五章的原子性分析中有进一步论证。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/crosschain_seq_refund.tex}
+  \caption{超时退款路径时序图}
+  \label{fig:crosschain_seq_refund}
+\end{figure}
+
+
+系统中 swapId、hashLock 和 timeLock 分别承担不同作用。swapId 是跨链请求编号，用于区分不同交换；hashLock 是两侧锁定的公共密码学锚点；timeLock 是失败退出机制。三者共同构成跨链状态机的关键上下文。
+
+
+上述流程描述的是合约链（HTLC）路径。在无脚本链的 adaptor signature 路径下，总体角色协作和阶段划分保持一致，但具体的条件锁定方式有所不同：资产锁定不通过链上 HTLC 脚本表达，而是通过预签名（PreSign）绑定秘密点 T；资产释放不通过链上提交 secret 触发，而是通过持有秘密 t 的一方补全签名并广播交易完成；秘密传递不通过链上 secret 公开，而是另一方从链上出现的有效签名与预签名的差值中提取 t。失败退出机制则通过预设的 timeLock 退款交易或多签回退路径实现。两种路径在架构层共享同一套角色模型和协调流程，差异仅在于底层条件锁定的实现层——这正是系统能够同时覆盖智能合约链和无脚本链的关键。

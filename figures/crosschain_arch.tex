@@ -1,0 +1,45 @@
+% 跨链系统分层架构图
+\begin{tikzpicture}[
+    font=\footnotesize,
+    layer/.style={rectangle, draw, rounded corners, minimum height=3.2em, align=center, fill=black!3},
+    mod/.style={rectangle, draw, minimum height=2.2em, minimum width=7.5em, align=center, fill=white},
+    arrow/.style={-{LaTeX}, thick},
+    biarrow/.style={{LaTeX}-{LaTeX}, thick},
+  ]
+
+  % ===== 前端可视化层 =====
+  \node[mod] (fe1) {跨链交换页面\\（产品原型）};
+  \node[mod, right=1.2cm of fe1] (fe2) {HTLC 演示页面\\（流程可视化）};
+  \begin{scope}[on background layer]
+    \node[layer, fit=(fe1)(fe2), inner sep=1.4ex, label={[anchor=west,xshift=-0.2cm]west:\textbf{前端可视化层}}] (felayer) {};
+  \end{scope}
+
+  % ===== 后端协调层 =====
+  \node[mod, below=2.4cm of fe1, xshift=-0.6cm] (be1) {API 路由层};
+  \node[mod, right=0.6cm of be1] (be2) {Coordinator\\分发层};
+  \node[mod, right=0.6cm of be2] (be3) {各链适配模块\\(ETH/BSC/Conflux/\\Fabric/BTC)};
+  \begin{scope}[on background layer]
+    \node[layer, fit=(be1)(be2)(be3), inner sep=1.4ex, label={[anchor=west,xshift=-0.2cm]west:\textbf{后端协调层}}] (belayer) {};
+  \end{scope}
+
+  % ===== 链上机制层 =====
+  \node[mod, below=2.4cm of be1, xshift=0.2cm] (cl1) {智能合约链\\HTLC 状态机\\(CrossChainTokenPool)};
+  \node[mod, right=1.6cm of cl1] (cl2) {无脚本链\\adaptor signature\\(scriptless 适配)};
+  \begin{scope}[on background layer]
+    \node[layer, fit=(cl1)(cl2), inner sep=1.4ex, label={[anchor=west,xshift=-0.2cm]west:\textbf{链上机制层}}] (cllayer) {};
+  \end{scope}
+
+  % ===== 层间连接 =====
+  \draw[biarrow] (felayer) -- node[right]{HTTP API} (belayer);
+  \draw[biarrow] (belayer) -- node[right]{事件监听 / 交易构造} (cllayer);
+
+  % ===== 角色标注（右侧） =====
+  \node[align=left, right=0.8cm of felayer.east, anchor=west] (rA) {Alice / Bob\\（用户端）};
+  \node[align=left, right=0.8cm of belayer.east, anchor=west] (rN) {Notary\\（公证中继）};
+  \node[align=left, right=0.8cm of cllayer.east, anchor=west] (rM) {ManagerA / ManagerB\\（资金池）};
+
+  \draw[dashed, gray] (felayer.east) -- (rA.west);
+  \draw[dashed, gray] (belayer.east) -- (rN.west);
+  \draw[dashed, gray] (cllayer.east) -- (rM.west);
+
+\end{tikzpicture}

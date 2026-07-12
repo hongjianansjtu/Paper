@@ -1,0 +1,65 @@
+% 跨链正常完成路径时序图
+\begin{tikzpicture}[
+    font=\footnotesize,
+    actor/.style={rectangle, draw, rounded corners, minimum height=2em, minimum width=4.6em, align=center, fill=black!3},
+    msg/.style={-{LaTeX}, thick},
+    ret/.style={-{LaTeX}, thick, dashed},
+    note/.style={font=\scriptsize\itshape, text=black!60},
+  ]
+
+  % ===== 角色生命线 X 坐标 =====
+  \def\xA{0}    % Alice
+  \def\xMA{2.6} % ManagerA
+  \def\xN{5.2}  % Notary
+  \def\xMB{7.8} % ManagerB
+  \def\xB{10.4} % Bob
+
+  % ===== 顶部角色框 =====
+  \node[actor] (A) at (\xA,0) {Alice};
+  \node[actor] (MA) at (\xMA,0) {ManagerA};
+  \node[actor] (N) at (\xN,0) {Notary};
+  \node[actor] (MB) at (\xMB,0) {ManagerB};
+  \node[actor] (B) at (\xB,0) {Bob};
+
+  % ===== 生命线（竖虚线） =====
+  \def\ybot{-9.2}
+  \foreach \x in {\xA,\xMA,\xN,\xMB,\xB}{
+    \draw[gray, dashed] (\x,-0.45) -- (\x,\ybot);
+  }
+
+  % ===== 消息（自上而下） =====
+  % 1. Alice 生成 secret / hashLock
+  \node[note, right] at (\xA+0.15,-1.0) {生成 secret，计算 hashLock = H(secret)};
+
+  % 2. Alice -> ManagerA: initiateCrossChain
+  \draw[msg] (\xA,-1.6) -- node[above, font=\scriptsize]{initiate(hashLock, recipient, amount, timeLock)} (\xMA,-1.6);
+  \node[note, right] at (\xMA-2.3,-2.05) {源链锁定 Alice 资产，记录 CrossChainSwap};
+
+  % 3. ManagerA --> Notary: 触发事件
+  \draw[msg] (\xMA,-2.6) -- node[above, font=\scriptsize]{CrossChainInitiated 事件} (\xN,-2.6);
+  \node[note, right] at (\xN-2.0,-3.05) {解析 swapId/hashLock/amount/recipient};
+
+  % 4. Notary -> ManagerB: 通知创建锁定
+  \draw[msg] (\xN,-3.6) -- node[above, font=\scriptsize]{managerRespond(hashLock, ...)} (\xMB,-3.6);
+  \node[note, right] at (\xMB-2.1,-4.05) {目标链创建 ManagerLock（较短 timeLock）};
+
+  % 5. ManagerB -> Bob: 锁定就绪
+  \draw[msg] (\xMB,-4.6) -- node[above, font=\scriptsize]{ManagerLockCreated} (\xB,-4.6);
+
+  % 6. Bob -> ManagerB: 揭示 secret 领取
+  \draw[msg] (\xB,-5.6) -- node[above, font=\scriptsize]{completeManagerLock(secret)} (\xMB,-5.6);
+  \node[note, right] at (\xMB-2.4,-6.05) {验证 H(secret)=hashLock，释放资产给 Bob};
+
+  % 7. secret 公开上链，回传至源链侧（Bob/ManagerB -> Alice）
+  \draw[ret] (\xMB,-6.6) -- node[above, font=\scriptsize]{secret 已在链上公开} (\xA,-6.6);
+
+  % 8. Alice -> ManagerA: 用 secret 完成源链结算
+  \draw[msg] (\xA,-7.6) -- node[above, font=\scriptsize]{completeCrossChain(swapId, secret)} (\xMA,-7.6);
+  \node[note, right] at (\xMA-2.0,-8.05) {源链结算完成，两侧状态均 completed};
+
+  % ===== 底部箭头收尾 =====
+  \foreach \x in {\xA,\xMA,\xN,\xMB,\xB}{
+    \draw[gray, dashed, -{LaTeX}] (\x,\ybot+0.2) -- (\x,\ybot);
+  }
+
+\end{tikzpicture}

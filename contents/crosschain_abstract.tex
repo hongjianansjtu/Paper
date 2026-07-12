@@ -1,0 +1,12 @@
+% !TEX root = ../main.tex
+
+\begin{abstract}[zh]
+  随着区块链生态的持续发展，单一区块链系统已经难以满足多链资产流通、跨平台业务协作和异构链互操作的需求。除了在跨链代币转移过程中公证人（Notary）的资产抵押需求影响了跨链流通性之外，不同区块链在账户模型、共识机制、智能合约能力、交易确认方式以及脚本表达能力方面存在明显差异，使得资产无法像同一系统内部转账一样直接从一条链迁移到另一条链。因此，通过区块链互操作算法和协议的研究，解决在异构区块链之间的跨链资产交换成为区块链技术演进的关键挑战之一。跨链协议不仅需要完成源链与目标链之间的状态协调，还需要保证交易过程中的原子性、安全性和失败回滚能力，避免出现一方资产已经锁定或支付，而另一方无法获得对应资产的情况。
+
+  针对上述问题，本文设计并实现了一个基于公证人协调与哈希时间锁的跨链资产交换原型系统。系统采用 Alice - ManagerA - Notary - ManagerB - Bob 的角色协作模型，其中 Alice和Bob 分别作为跨链交易的发起方和目标链接收方，ManagerA 与 ManagerB 分别负责源链和目标链上的资产池管理，Notary 作为公证与中继节点负责监听链上事件并协调目标链响应。在支持智能合约的链上，系统通过 HTLC 哈希时间锁机制实现资产锁定、条件领取和超时退款；针对 Monero、ZCash 屏蔽交易等不具备通用脚本能力的无脚本链，由于 HTLC 所依赖的哈希锁判断和条件分支逻辑无法在链上表达，系统引入 Schnorr adaptor signature，将锁定条件从脚本层转移到签名补全过程，使条件化交易在仅具备签名能力的链上同样可以实现，解决了异构跨链的原子性和安全问题。原型实现以 BTC 作为 scriptless 场景的替代实现，用于验证 adaptor signature 机制在签名补全与秘密提取上的正确性。本文围绕系统架构、核心机制、合约实现、公证人协调流程、scriptless 适配方式、安全性分析以及实验展示进行论述，证明该原型系统能够在统一跨链流程下兼容从智能合约链到无脚本链的不同执行能力，为多种异构链之间的资产交换提供可靠、高效的解决方案。
+
+\end{abstract}
+
+\begin{abstract}[en]
+  This thesis designs and implements a cross-chain asset exchange prototype based on notary coordination and hashed timelock contracts. The system follows the role model of Alice, ManagerA, Notary, ManagerB, and Bob. For contract-capable blockchains, the system uses HTLCs to express asset locking, conditional claiming, and timeout refunding on chain. For scriptless blockchains such as Monero and ZCash shielded transactions, where the hash-lock checks and conditional branches required by HTLCs cannot be expressed on chain, the system introduces Schnorr adaptor signatures to move the locking condition from the script layer into the signature adaptation process, so that conditional transactions remain achievable on chains that only support signing. The prototype uses Bitcoin as a stand-in for the scriptless scenario to validate the correctness of the adaptor signature mechanism in signature completion and secret extraction. The thesis presents the system architecture, core mechanisms, implementation modules, security analysis, and experimental validation, showing that the prototype can provide a unified workflow for heterogeneous blockchain asset exchange ranging from smart-contract chains to scriptless chains.
+\end{abstract}

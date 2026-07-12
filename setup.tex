@@ -14,8 +14,8 @@
     %
     % 标题
     %
-    zh / title           = {上海交通大学学位论文 \LaTeX{} 模板示例文档},
-    en / title           = {A Sample Document for \LaTeX-based SJTU Thesis Template},
+    zh / title           = {基于公证人协调与哈希时间锁的跨链资产交换系统设计与实现},
+    en / title           = {Design and Implementation of a Cross-chain Asset Exchange System Based on Notary Coordination and Hashed Timelock Contracts},
     %
     % 标题页标题
     %   可使用“\\”命令手动控制换行
@@ -25,22 +25,27 @@
     %
     % 关键词
     %
-    zh / keywords        = {上海交大, 饮水思源, 爱国荣校},
-    en / keywords        = {SJTU, master thesis, XeTeX/LaTeX template},
+    zh / keywords        = {跨链资产交换, 哈希时间锁, 公证人机制, Schnorr Adaptor Signature, 异构区块链, 智能合约},
+    en / keywords        = {cross-chain asset exchange, hashed timelock contract, notary mechanism, Schnorr adaptor signature, heterogeneous blockchain, smart contract},
+    %
+    % 封面横幅与页眉文字（覆盖默认的“上海交通大学硕士学位论文”）
+    %
+    zh / subject         = {上海交通大学第 48 期 PRP 项目结题论文},
+    en / subject         = {SJTU PRP Project Report (Term 48)},
     %
     % 姓名
     %
-    zh / author          = {某\quad{}某},
-    en / author          = {Mo Mo},
+    zh / author          = {胡金坤},
+    en / author          = {Hu Jinkun},
     %
     % 学号
     %
-    id              = {0010900990},
+    id              = {524143910016},
     %
     % 指导教师
     %
-    zh / supervisor      = {某某教授},
-    en / supervisor      = {Prof.\ Mou Mou},
+    zh / supervisor      = {洪佳楠},
+    en / supervisor      = {Hong Jianan},
     %
     % 副指导教师
     %
@@ -53,21 +58,21 @@
     %
     % 所属院系
     %
-    zh / department      = {某某系},
-    en / department      = {Depart of XXX},
+    zh / department      = {巴黎卓越工程师学院},
+    en / department      = {SJTU-ParisTech Elite Institute of Technology},
     %
     % 专业
     %
-    zh / major           = {某某专业},
-    en / major           = {A Very Important Major},
+    zh / major           = {法语},
+    en / major           = {French},
     %
     % 学位
     %   除交叉学科门类外，各一级学科按所属学科门类申请学位
     %   专业学位类别按专业名称申请学位
-    %   本科生不需要填写
+    %   本科生不需要填写（PRP 为本科结题项目，不申请学位）
     %
-    zh / degree          = {工学硕士},
-    en / degree          = {Master of Engineering},
+    % zh / degree          = {工学硕士},
+    % en / degree          = {Master of Engineering},
     %
     % 答辩日期
     %   使用 ISO 格式 (yyyy-mm-dd)；默认为当前时间
@@ -162,25 +167,51 @@
 
 % 代码环境宏包
 \usepackage{listings}
+% 代码块配色
+\definecolor{codebg}{RGB}{248,249,250}
+\definecolor{codeframe}{RGB}{218,222,226}
+\definecolor{codecomment}{RGB}{106,115,125}
+\definecolor{codestring}{RGB}{0,128,64}
+\definecolor{codekeyword}{RGB}{0,92,197}
+\definecolor{codetype}{RGB}{121,40,167}
+% Solidity 语言定义（listings 无内置 Solidity）
+\lstdefinelanguage{Solidity}{
+  morekeywords={contract,function,struct,mapping,modifier,event,emit,require,
+    return,returns,external,public,private,internal,view,pure,payable,memory,
+    storage,calldata,address,bool,bytes32,uint256,uint,int,if,else,for,while,
+    constructor,indexed,nonReentrant,whenNotPaused,onlyManager,onlyNotary},
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]",
+  sensitive=true,
+}
 \lstdefinestyle{lstStyleCode}{%
   aboveskip         = \medskipamount,
   belowskip         = \medskipamount,
   basicstyle        = \ttfamily\zihao{-5}\setbaselineskip{12bp},
-  commentstyle      = \slshape\color{black!60},
-  stringstyle       = \color{green!40!black!100},
-  keywordstyle      = \bfseries\color{blue!50!black},
-  extendedchars     = false,
+  commentstyle      = \slshape\color{codecomment},
+  stringstyle       = \color{codestring},
+  keywordstyle      = \bfseries\color{codekeyword},
+  identifierstyle   = \color{black},
+  extendedchars     = true,
   upquote           = true,
   tabsize           = 2,
   showstringspaces  = false,
-  xleftmargin       = 1em,
+  xleftmargin       = 1.2em,
   xrightmargin      = 1em,
-  breaklines        = false,
-  framexleftmargin  = 1em,
+  breaklines        = true,
+  breakatwhitespace = true,
+  frame             = single,
+  framerule         = 0.4pt,
+  rulecolor         = \color{codeframe},
+  framexleftmargin  = 1.2em,
   framexrightmargin = 1em,
-  backgroundcolor   = \color{gray!10},
+  framextopmargin   = 3pt,
+  framexbottommargin= 3pt,
+  backgroundcolor   = \color{codebg},
   columns           = flexible,
   keepspaces        = true,
+  numbers           = none,
   % texcl             = true,  % 代码中的注释部分将会被视为 LaTeX 正文模式内容
   % mathescape        = true,  % 代码中$..$的部分将会被视为 LaTeX 数学模式内容
 }
@@ -202,7 +233,7 @@
 
 % 绘图宏包
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta, shapes.geometric}
+\usetikzlibrary{arrows.meta, shapes.geometric, positioning, calc, fit, backgrounds}
 
 % 数据图表宏包
 \usepackage{pgfplots}
@@ -216,6 +247,9 @@
 % 借用 ltxdoc 里面的几个命令方便写文档
 \DeclareRobustCommand\cs[1]{\texttt{\char`\\#1}}
 \providecommand\pkg[1]{{\sffamily#1}}
+\DeclareRobustCommand{\filepath}[1]{%
+  {\small\sffamily\textcolor{black!70}{\detokenize{#1}}}%
+}
 
 % hyperref 宏包在最后调用
 \usepackage{hyperref}

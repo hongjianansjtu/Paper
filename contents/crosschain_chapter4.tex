@@ -1,0 +1,60 @@
+% !TEX root = ../main.tex
+
+\chapter{核心机制设计与实现}
+
+
+\section{合约链上的 HTLC 实现}
+
+
+在支持智能合约的链上，本文系统使用 HTLC 实现跨链资产锁定。合约中的 CrossChainSwap 结构记录用户侧交换状态，包括 hashLock、timeLock、sender、recipient、amount、completed、refunded、createdAt 和 isManagerLocked 等字段。ManagerLock 结构记录 Manager 侧响应锁定状态，包括 hashLock、timeLock、recipient、amount、completed、refunded 和 createdAt 等字段。
+
+
+当 Alice 调用 initiateCrossChain 发起交换时，合约首先检查 hashLock 是否为空、recipient 是否有效、amount 是否大于零以及用户余额是否足够。随后合约生成 swapId，将 Alice 的资产转入合约地址锁定，并保存 CrossChainSwap 状态。该过程完成后，合约触发 CrossChainInitiated 事件，供 Notary 监听。
+
+
+目标链 Manager 在收到 Notary 转发的请求后，调用 managerRespondToCrossChain 创建 ManagerLock。该函数要求调用者必须是 Manager，并要求 hashLock 未被重复使用。Manager 侧的锁定通常应设置比用户侧更短的 timeLock，这样可以减少目标链资产长时间占用的风险，也有利于失败时按合理顺序退款。
+
+
+完成交易时，completeCrossChain 或 completeManagerLock 函数会要求调用方提交 secret。合约计算 keccak256(secret)，并与保存的 hashLock 比较。如果匹配，则将状态标记为 completed，并执行资产释放、销毁或结算逻辑。如果不匹配，交易会回滚。这一机制保证不知道 secret 的参与方无法领取资产。
+
+
+退款时，refundCrossChain 和 refundManagerLock 依赖 timeLock 判断。只有超过规定时间且交易未完成、未退款时，退款逻辑才能执行。用户侧退款将锁定资产退回 Alice，Manager 侧退款则释放或回收 Manager 锁定的资产。通过完成和退款两条路径，合约形成了一个简明的跨链状态机。
+
+
+\section{公证人协调流程}
+
+
+公证人协调流程是连接源链和目标链的关键。由于不同链之间不能直接调用彼此合约，源链上的事件不会自动触发目标链状态变化，因此需要 Notary 监听源链事件并发起目标链交易。
+
+
+在本文系统中，Notary 的典型流程包括：首先连接源链节点，订阅或轮询 CrossChainInitiated 事件；其次解析事件中的 swapId、hashLock、sender、recipient、amount 和 timeLock 等参数；然后根据 targetChainId 或系统配置确定目标链；最后调用目标链 Manager 或 TokenPool 合约创建对应锁定。Notary 还可以记录跨链状态，便于前端查询交易进度。
+
+
+Notary 的设计需要注意信任边界。它可以延迟消息、漏转发消息或错误转发参数，但它不应拥有绕过 hashLock 直接释放资产的能力。目标链 ManagerLock 的完成仍然依赖正确 secret，源链退款仍然依赖 timeLock。因此，Notary 是流程协调者，不是最终安全性的唯一来源。安全性应由合约条件、签名协议和超时机制共同保证。
+
+
+\section{无脚本链场景中的 adaptor signature}
+
+
+对于 Monero、ZCash 屏蔽交易等无脚本链，链上不提供通用脚本或合约系统，HTLC 所依赖的哈希锁判断和条件分支无法在链上表达，因此无法直接迁移 HTLC。本文系统引入 Schnorr adaptor signature 作为这类链上的条件锁定方案。其核心过程是：参与方先构造一份与秘密值相关的预签名，该预签名本身不是有效签名，无法直接完成交易；当秘密值被揭示或补入后，预签名可以转化为正式签名，交易得以完成；同时，另一方可以根据预签名和正式签名之间的差异提取秘密。这样，原本需要链上脚本判断的"提交正确 secret 才能领取"条件，被等价地转化为"补全正确秘密才能生成有效签名"，仅凭签名能力即可完成。
+
+
+这种设计与 HTLC 的目标一致，都是将两侧交易绑定到同一个秘密上。但二者的实现层不同：HTLC 在链上保存 hashLock，由合约或脚本验证 secret；adaptor signature 在链下签名协议中嵌入秘密条件，由签名补全关系保证交易完成与秘密公开之间的联系，链上只需验证一笔普通签名。正因如此，adaptor signature 不依赖目标链具备任何脚本能力，能够覆盖 HTLC 无法触及的无脚本链。
+
+
+在本文原型中，scriptless 模块主要承担机制验证作用，以 BTC 作为无脚本链场景的替代实现。它模拟了 Alice、Bob 等参与方如何创建 adaptor signature，如何在链上观察签名完成，如何提取 secret，以及如何使用该 secret 完成另一侧交换。需要说明的是，选择 BTC 作为替代是出于其签名模型成熟、便于模拟的工程考虑，并不意味着 BTC 本身缺乏脚本能力；该模块验证的是 adaptor signature 在"仅有签名能力"假设下的正确性，这一正确性可直接迁移到 Monero、ZCash 屏蔽交易等真正的无脚本链。
+
+
+\section{HTLC 与 adaptor signature 的统一关系}
+
+
+HTLC 与 adaptor signature 并不是两套彼此割裂的跨链系统，而是统一跨链架构下针对不同链能力的两种实现方式。它们都服务于同一个目标：使跨链交易的完成依赖同一个秘密条件，并在失败时提供安全退出路径。两种机制的选择根植于目标链脚本表达能力的差异。
+
+
+EVM 类链采用账户模型，具备较强的智能合约表达能力。合约可以维护全局状态映射（如 swapId → CrossChainSwap 结构），在链上直接保存 hashLock、timeLock、sender、recipient、amount 等字段，并通过合约函数显式执行锁定、条件领取和超时退款逻辑。整个跨链交换的状态机可以完整地在链上表达和验证，因此 HTLC 是合约链上自然且高效的选择。
+
+
+无脚本链（如 Monero、ZCash 屏蔽交易）则处于另一个极端：它们以环签名、零知识证明等纯密码学方式构造交易，链上不提供通用脚本或合约系统，资产花费完全由签名授权决定。在这类链上，HTLC 所需的"提交正确 secret 才能领取"这一条件分支根本无法在链上表达，因此 HTLC 无法迁移。Schnorr adaptor signature 将条件锁定逻辑从链上脚本转移到链下签名协议中，交易的完成取决于签名是否被正确补全，而非脚本分支的执行路径。由于补全后的产物只是一笔普通签名，adaptor signature 不要求目标链具备任何脚本能力，从而把原子交换的适用范围从合约链扩展到了无脚本链。这一点是 adaptor signature 相对链上 HTLC 不可替代的价值：它解决的不是"是否更优"的问题，而是"在无脚本链上是否可行"的问题。
+
+
+因此，本文系统的兼容性并不来自”所有链使用同一种机制”，而来自”所有链遵循同一角色流程，并根据自身脚本能力选择合适的底层机制”。在架构层，Alice、Manager、Notary、Bob 的流程保持一致；在机制层，合约链采用链上 HTLC，无脚本链采用 adaptor signature 以摆脱对脚本能力的依赖；在协调层，swapId、hashLock、secret、amount 和 recipient 构成统一上下文。
