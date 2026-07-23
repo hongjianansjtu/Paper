@@ -6,16 +6,16 @@
 \section{HTLC 哈希时间锁}
 
 
-HTLC 全称为 Hashed TimeLock Contract，即哈希时间锁合约~\cite{poon2016bitcoin,10.1145/3212734.3212736}。它是跨链原子交换中常用的一种机制，其核心思想是将资产领取条件拆分为两个部分：哈希锁和时间锁。哈希锁要求领取方必须提交一个 secret，使得该 secret 经过哈希计算后等于合约中预先保存的 hashLock；时间锁则规定如果在指定时间内没有人提交正确 secret，资产可以被原始锁定方取回。
+HTLC 全称为 Hashed TimeLock Contract，即哈希时间锁合约~\cite{poon2016bitcoin,10.1145/3212734.3212736}。它被广泛应用于链下支付通道和跨链原子交换中。其核心思想是将资产领取条件拆分为两个部分：哈希锁和时间锁。哈希锁要求领取方必须提交一个 secret，使得该 secret 经过哈希计算后等于合约中预先保存的 hashLock；时间锁则规定如果在指定时间内没有人提交正确 secret，资产可以被原始锁定方取回。
 
 
 HTLC 的基本流程可以描述为：Alice 首先生成随机 secret，并计算 hashLock = H(secret)。在发起跨链交换时，Alice 并不公开 secret，而是将 hashLock 写入源链锁定合约。目标链也使用同一个 hashLock 创建对应锁定。这样，两条链上的资产虽然位于不同账本中，但它们的领取条件都被同一个 secret 绑定。当某一方为了领取目标链资产而公开 secret 时，另一方也可以使用该 secret 去完成源链或目标链上的对应操作。若 secret 始终没有公开，则双方都无法领取对方资产，最终只能等待 timeLock 到期后退款。
 
 
-HTLC 的优势在于结构清晰、实现相对简单，并且适合部署在具有智能合约能力的链上。在 Solidity 合约中，hashLock 可以作为 bytes32 类型保存，timeLock 可以用区块高度或时间戳表示。完成交易时，合约只需验证 keccak256(secret) 是否等于 hashLock；退款时，合约只需判断当前区块高度是否超过 timeLock。通过这种方式，链上合约能够自动执行“正确 secret 领取”和“超时退款”两类规则。
+HTLC 的优势在于结构清晰、其原子性保持能力不依赖于对区块链账本状态的掌握，并且适合部署在具有智能合约能力的链上。在 Solidity 合约中，hashLock 可以作为 bytes32 类型保存，timeLock 可以用区块高度或时间戳表示。完成交易时，合约只需验证 keccak256(secret) 是否等于 hashLock；退款时，合约只需判断当前区块高度是否超过 timeLock。通过这种方式，链上合约能够自动执行“正确 secret 领取”和“超时退款”两类规则。
 
 
-不过，HTLC 也存在适用边界~\cite{tsabary2021mad}。它要求参与链能够在链上表达哈希锁判断和超时退款两类条件逻辑，并要求参与方在超时前后及时发起领取或退款交易。这一前提在具备脚本或合约能力的链上容易满足——例如 BTC 通过 OP\_SHA256、OP\_HASH160 和 OP\_CHECKLOCKTIMEVERIFY 等操作码即可实现链上 HTLC，Lightning Network 正是建立在这一能力之上~\cite{poon2016bitcoin}。但对于 Monero、ZCash 屏蔽交易等无脚本链，情况则完全不同：这类链以环签名、零知识证明等纯密码学方式构造交易，不提供通用脚本系统，无法在链上表达"提交正确 secret 才能领取"这样的条件分支。因此，HTLC 的条件逻辑根本无法迁移到无脚本链上。要让这类链参与原子交换，必须将条件锁定从脚本层转移到签名协议层，这正是下一节 Schnorr adaptor signature~\cite{9833731} 所解决的问题。
+不过，HTLC 也存在适用边界~\cite{tsabary2021mad}。它要求参与链能够在链上表达哈希锁判断和超时退款两类条件逻辑，并要求参与方在超时前后及时发起领取或退款交易。这一前提在具备脚本或合约能力的链上容易满足——例如 BTC 通过 OP\_SHA256、OP\_HASH160 和 OP\_CHECKLOCKTIMEVERIFY 等操作码即可实现链上 HTLC，Lightning Network 正是建立在这一能力之上~\cite{poon2016bitcoin}。但对于 Monero、ZCash 屏蔽交易等无脚本链，情况则完全不同：这类链以环签名、零知识证明等纯密码学方式构造交易，不提供通用脚本系统，无法在链上表达``提交正确 secret 才能领取"这样的条件分支。因此，HTLC 的条件逻辑根本无法迁移到无脚本链上。要让这类链参与原子交换，必须将条件锁定从脚本层转移到签名协议层，本文选用在下一节所介绍的 Schnorr adaptor signature~\cite{9833731} 算法解决以上问题。
 
 
 \section{Schnorr 签名与 Adaptor Signature}
