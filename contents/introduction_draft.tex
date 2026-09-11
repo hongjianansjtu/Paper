@@ -1,0 +1,15 @@
+\\section{Introduction}
+
+Blockchain ecosystems are heterogeneous. Different ledgers use different account models, transaction formats, confirmation rules, and programmability assumptions~\\cite{nakamoto2008bitcoin,zheng2018blockchain,lohachab2021towards}. Transferring value between ledgers therefore requires coordination of independent state machines.
+
+An exchange must be atomic: if Alice locks an asset, Bob obtains the corresponding asset, and if the exchange fails Alice can recover her funds. Hash time-locked contracts (HTLCs) bind both claims to one secret and provide a timeout refund path~\\cite{10.1145/3212734.3212736,poon2016bitcoin,zamyatin2021sok}.
+
+The challenge is greater when chains expose different scripting models. Ethereum-like chains can express HTLC state transitions in smart contracts. Monero provides protocol-level privacy through stealth addresses, ring signatures, and RingCT~\\cite{monero2023getstarted}; Zcash supports transparent and shielded transactions through zero-knowledge proofs~\\cite{zcash2023github}. Schnorr adaptor signatures move conditionality from a script branch to signature completion~\\cite{9833731,schnorr1991efficient}.
+
+Existing projects such as COMIT, BasicSwap, and Eigenwallet demonstrate practical atomic swaps for selected pairs~\\cite{comit2023xmrbtc,basicswap2023github,eigenwallet2023core}. Nevertheless, pair-specific systems require repeated integration work, and atomic-swap cryptography is not uniform across blockchains.
+
+\\textbf{Problem statement.} This paper addresses the lack of a unified workflow for heterogeneous cross-chain exchanges. The workflow must separate message coordination from asset custody, support both contract-based and signature-based conditional locking, and provide explicit completion and refund conditions while stating the trust boundary of the coordination service.
+
+\\textbf{Contributions.} We design and implement a prototype with: (1) an Alice--ManagerA--Notary--ManagerB--Bob workflow; (2) HTLC support for contract-capable chains and a Schnorr adaptor-signature module for scriptless scenarios; (3) security analysis of atomicity, refunds, parameter consistency, replay, front-running, secret leakage, and coordinator availability; and (4) evaluation of functional correctness and cross-mechanism secret propagation.
+
+The remainder of this paper is organized as follows. Section~II introduces HTLCs and Schnorr adaptor signatures. Section~III presents the system model and workflow. Section~IV describes the implementation. Section~V analyzes security. Section~VI reports experiments. Section~VII concludes.
